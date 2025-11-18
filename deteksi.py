@@ -5,14 +5,14 @@ import streamlit as st
 from gtts import gTTS
 import tempfile
 import os
-import pygame
+import base64
 from PIL import Image
 import time
 
 # ===========================================
 # SETUP
 # ===========================================
-pygame.mixer.init()
+# Hapus pygame karena tidak bekerja di Streamlit Cloud
 
 # Set page configuration for SPA layout
 st.set_page_config(
@@ -22,7 +22,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-logo_path = "IMG\LOGO UKM IT no Background.png"
+# Perbaiki path logo
+logo_path = "IMG/LOGO UKM IT no Background.png"
 
 # ===========================================
 # SIDEBAR
@@ -31,8 +32,11 @@ with st.sidebar:
     # Logo di sidebar
     st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
     if os.path.exists(logo_path):
-        logo = Image.open(logo_path)
-        st.image(logo, use_container_width=True, output_format="PNG")
+        try:
+            logo = Image.open(logo_path)
+            st.image(logo, use_container_width=True, output_format="PNG")
+        except Exception as e:
+            st.warning(f"⚠️ Gagal memuat logo: {e}")
     else:
         st.warning("⚠️ Logo tidak ditemukan")
     st.markdown("</div>", unsafe_allow_html=True)
@@ -92,6 +96,33 @@ def count_fingers(hand_landmarks, hand_label):
 
     return sum(fingers)
 
+def play_audio(text):
+    """Fungsi untuk memutar audio menggunakan HTML5 audio player"""
+    try:
+        # Generate audio file
+        tts = gTTS(text=text, lang='id')
+        audio_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+        tts.save(audio_file.name)
+        
+        # Read audio file and encode to base64
+        with open(audio_file.name, 'rb') as f:
+            audio_bytes = f.read()
+        audio_b64 = base64.b64encode(audio_bytes).decode()
+        
+        # Create HTML audio player
+        audio_html = f'''
+        <audio autoplay>
+            <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
+        </audio>
+        '''
+        st.markdown(audio_html, unsafe_allow_html=True)
+        
+        # Clean up
+        os.unlink(audio_file.name)
+        
+    except Exception as e:
+        st.error(f"❌ Gagal memutar suara: {e}")
+
 # Initialize session state
 if 'camera_active' not in st.session_state:
     st.session_state.camera_active = False
@@ -107,62 +138,53 @@ if st.session_state.camera_active:
     camera_container = st.container()
     
     with camera_container:
-        cap = cv2.VideoCapture(0)
-        with mp_hands.Hands(min_detection_confidence=0.7,
-                            min_tracking_confidence=0.7,
-                            max_num_hands=2) as hands:
-            stframe = st.empty()
-            st.session_state.last_number = None
+        try:
+            cap = cv2.VideoCapture(0)
+            with mp_hands.Hands(min_detection_confidence=0.7,
+                                min_tracking_confidence=0.7,
+                                max_num_hands=2) as hands:
+                stframe = st.empty()
+                st.session_state.last_number = None
 
-            while st.session_state.camera_active:
-                ret, frame = cap.read()
-                if not ret:
-                    st.error("❌ Tidak dapat mengakses kamera")
-                    st.session_state.camera_active = False
-                    st.rerun()
-                    break
+                while st.session_state.camera_active:
+                    ret, frame = cap.read()
+                    if not ret:
+                        st.error("❌ Tidak dapat mengakses kamera")
+                        st.session_state.camera_active = False
+                        st.rerun()
+                        break
 
-                frame = cv2.flip(frame, 1)
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                result = hands.process(rgb)
+                    frame = cv2.flip(frame, 1)
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    result = hands.process(rgb)
 
-                total_fingers = 0
-                if result.multi_hand_landmarks:
-                    for hand_landmarks, hand_label in zip(result.multi_hand_landmarks, result.multi_handedness):
-                        label = hand_label.classification[0].label
-                        mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-                        total_fingers += count_fingers(hand_landmarks, label)
+                    total_fingers = 0
+                    if result.multi_hand_landmarks:
+                        for hand_landmarks, hand_label in zip(result.multi_hand_landmarks, result.multi_handedness):
+                            label = hand_label.classification[0].label
+                            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                            total_fingers += count_fingers(hand_landmarks, label)
 
-                # Display finger count
-                cv2.putText(frame, f"Angka: {total_fingers}", (30, 100),
-                            cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
-                
-                # Display frame
-                stframe.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+                    # Display finger count
+                    cv2.putText(frame, f"Angka: {total_fingers}", (30, 100),
+                                cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
+                    
+                    # Display frame
+                    stframe.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
 
-                # Text-to-speech when number changes
-                if total_fingers != st.session_state.last_number and total_fingers in angka_teks:
-                    st.session_state.last_number = total_fingers
-                    text_to_say = angka_teks[total_fingers]
+                    # Text-to-speech when number changes
+                    if total_fingers != st.session_state.last_number and total_fingers in angka_teks:
+                        st.session_state.last_number = total_fingers
+                        text_to_say = angka_teks[total_fingers]
+                        
+                        # Play audio using HTML5 audio player
+                        play_audio(text_to_say)
 
-                    try:
-                        # Create unique audio file
-                        temp_dir = tempfile.gettempdir()
-                        temp_path = os.path.join(temp_dir, f"angka_{time.time_ns()}.mp3")
-
-                        # Generate and save audio
-                        tts = gTTS(text=text_to_say, lang='id')
-                        tts.save(temp_path)
-
-                        # Play audio
-                        pygame.mixer.music.unload()
-                        pygame.mixer.music.load(temp_path)
-                        pygame.mixer.music.play()
-
-                    except Exception as e:
-                        st.error(f"❌ Gagal memutar suara: {e}")
-
-        cap.release()
+            cap.release()
+        except Exception as e:
+            st.error(f"❌ Error akses kamera: {e}")
+            st.session_state.camera_active = False
+            st.rerun()
 else:
     # Welcome state when camera is off
     st.info("🔴 **Kamera Tidak Aktif** - Klik 'Aktifkan Kamera' di sidebar untuk memulai")
@@ -175,6 +197,8 @@ else:
     3. Tunjukkan jari tangan ke kamera
     4. Sistem akan mendeteksi jumlah jari dan mengucapkannya
     5. Klik **⏹️ Matikan Kamera** untuk menghentikan
+    
+    **Catatan:** Fitur suara menggunakan HTML5 Audio Player
     """)
     
     # Placeholder for camera area
